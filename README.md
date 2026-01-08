@@ -32,17 +32,17 @@ Install using Cargo. Choose the source that fits your privacy needs:
 
 # From GitHub (Primary)
 ```bash
-cargo install --git [https://github.com/CipherStray/shhcrypt](https://github.com/CipherStray/shhcrypt) --force
+cargo install --git https://github.com/CipherStray/shhcrypt --force
 ```
 
 # From GitLab (Secure Mirror)
 ```bash
-cargo install --git [https://gitlab.com/CipherStray/shhcrypt](https://gitlab.com/CipherStray/shhcrypt) --force
+cargo install --git https://gitlab.com/CipherStray/shhcrypt --force
 ```
 
 # From Codeberg (Privacy-Focused Mirror)
 ```bash
-cargo install --git [https://codeberg.org/CipherStray/shhcrypt](https://codeberg.org/CipherStray/shhcrypt) --force
+cargo install --git https://codeberg.org/CipherStray/shhcrypt --force
 ```
 After installation, simply type shhcrypt in your terminal to start.
 
