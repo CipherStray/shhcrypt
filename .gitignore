@@ -1,3 +1,4 @@
 /target
 Cargo.lock
 .shh_tmp.tar
+.vault_tmp.tar
