@@ -1,3 +1,9 @@
+/* ⚠️ WARNING: This project is co-authored with Gemini (Vibecoding).
+It is currently under security refactoring. DO NOT use for sensitive data.
+Refactor Status: Salt fixed, Symlink safety added. 
+Still to-do: RAM-only processing, Path traversal checks.
+*/
+
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode},
@@ -59,7 +65,7 @@ impl App {
         Self {
             path: String::new(),
             pass: String::new(),
-            logs: vec!["shhcrypt Engine v1.0.0 Active".into()],
+            logs: vec!["shhcrypt Hardening v1.1 Active".into()],
             is_pass: false,
             busy: false,
             last_error: None,
@@ -90,8 +96,8 @@ impl App {
     }
 }
 
-fn derive_key(password: &str) -> Vec<u8> {
-    let salt = b"static_salt_for_shhcrypt_v1.0";
+// ARTIK GÜVENLİ: Her işlem için rastgele Salt kullanılıyor.
+fn derive_key(password: &str, salt: &[u8]) -> Vec<u8> {
     let mut output_key = [0u8; 32];
     let argon2 = Argon2::default();
     argon2.hash_password_into(password.as_bytes(), salt, &mut output_key).expect("Key Derivation Error");
@@ -100,6 +106,12 @@ fn derive_key(password: &str) -> Vec<u8> {
 
 fn secure_delete(path: &Path) -> Result<(), VaultError> {
     if !path.exists() { return Ok(()); }
+    
+    // GÜVENLİK: Symlink ise içeriği silme, sadece bağı kaldır.
+    if path.is_symlink() {
+        return fs::remove_file(path).map_err(|e| VaultError::IOError(e.to_string()));
+    }
+
     if path.is_dir() {
         for entry in fs::read_dir(path).map_err(|e| VaultError::IOError(e.to_string()))? {
             secure_delete(&entry.map_err(|e| VaultError::IOError(e.to_string()))?.path())?;
@@ -132,20 +144,27 @@ fn process_file(path_str: &str, mut password: String) -> Result<String, VaultErr
     let path = PathBuf::from(&clean_path);
     if !path.exists() { return Err(VaultError::FileNotFound(clean_path)); }
 
-    let key_bytes = derive_key(&password);
-    password.zeroize();
-    
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-        .map_err(|_| VaultError::EncryptionError("Cipher Failure".into()))?;
-
     let parent = path.parent().unwrap_or(Path::new("."));
 
     if clean_path.ends_with(".shh") {
         let mut file = File::open(&path).map_err(|e| VaultError::IOError(e.to_string()))?;
+        
+        // Önce Salt'ı oku (16 byte)
+        let mut salt = [0u8; 16];
+        file.read_exact(&mut salt).map_err(|_| VaultError::CorruptedFile)?;
+        
+        // Sonra Nonce'u oku (12 byte)
         let mut nonce_bytes = [0u8; 12];
         file.read_exact(&mut nonce_bytes).map_err(|_| VaultError::CorruptedFile)?;
+        
         let mut encrypted = Vec::new();
         file.read_to_end(&mut encrypted).map_err(|e| VaultError::IOError(e.to_string()))?;
+
+        let key_bytes = derive_key(&password, &salt);
+        password.zeroize();
+
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|_| VaultError::EncryptionError("Cipher Failure".into()))?;
 
         let compressed = cipher.decrypt(Nonce::from_slice(&nonce_bytes), Payload::from(&encrypted[..]))
             .map_err(|_| VaultError::DecryptionError)?;
@@ -163,9 +182,20 @@ fn process_file(path_str: &str, mut password: String) -> Result<String, VaultErr
         secure_delete(&path)?;
         Ok(format!("DECRYPTED: {}", clean_path))
     } else {
+        // ENCRYPT
+        let mut salt = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut salt);
+        
+        let key_bytes = derive_key(&password, &salt);
+        password.zeroize();
+        
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|_| VaultError::EncryptionError("Cipher Failure".into()))?;
+
         let temp_tar = parent.join(".shh_tmp.tar");
         let mut builder = tar::Builder::new(File::create(&temp_tar).map_err(|e| VaultError::IOError(e.to_string()))?);
         let name = path.file_name().ok_or(VaultError::InvalidPath)?;
+        
         if path.is_dir() { builder.append_dir_all(name, &path) } else { builder.append_path_with_name(&path, name) }
             .map_err(|e| VaultError::TarError(e.to_string()))?;
         builder.finish().map_err(|e| VaultError::TarError(e.to_string()))?;
@@ -182,6 +212,7 @@ fn process_file(path_str: &str, mut password: String) -> Result<String, VaultErr
 
         let out_path = format!("{}.shh", clean_path);
         let mut out_file = File::create(out_path).map_err(|e| VaultError::IOError(e.to_string()))?;
+        out_file.write_all(&salt).map_err(|e| VaultError::IOError(e.to_string()))?; // Salt dosyaya yazıldı
         out_file.write_all(&nonce_bytes).map_err(|e| VaultError::IOError(e.to_string()))?;
         out_file.write_all(&encrypted).map_err(|e| VaultError::IOError(e.to_string()))?;
 
@@ -196,14 +227,14 @@ fn render(out: &mut io::Stdout, app: &App, w: u16, h: u16) -> io::Result<()> {
     let color = if app.busy { Color::Red } else if app.last_error.is_some() { Color::Yellow } else { Color::Cyan };
     execute!(out, SetForegroundColor(color))?;
     
+    if w < 20 || h < 10 { return Ok(()); } // Terminal çok küçükse render yapma
+
     execute!(out, cursor::MoveTo(0,0), Print(format!("╔{}╗", "═".repeat(w as usize - 2))))?;
     execute!(out, cursor::MoveTo(0,h-1), Print(format!("╚{}╝", "═".repeat(w as usize - 2))))?;
     for y in 1..h-1 { execute!(out, cursor::MoveTo(0,y), Print("║"), cursor::MoveTo(w-1,y), Print("║"))?; }
 
-    let brand = "CipherStray/shhcrypt";
-    let exit_hint = "exit = q";
-    execute!(out, cursor::MoveTo(w - brand.len() as u16 - 2, 1), SetForegroundColor(Color::DarkGrey), Print(brand))?;
-    execute!(out, cursor::MoveTo(w - exit_hint.len() as u16 - 2, 2), Print(exit_hint))?;
+    let brand = "shhcrypt (Hardening Mode)";
+    execute!(out, cursor::MoveTo(2, 1), SetForegroundColor(Color::DarkGrey), Print(brand))?;
 
     let max_text_width = (w - 12) as usize; 
 
@@ -212,19 +243,13 @@ fn render(out: &mut io::Stdout, app: &App, w: u16, h: u16) -> io::Result<()> {
     } else {
         app.path.clone()
     };
-    execute!(out, cursor::MoveTo(2,2), SetForegroundColor(Color::Green), Print("TARGET: "), SetForegroundColor(Color::White), Print(display_path))?;
+    execute!(out, cursor::MoveTo(2,3), SetForegroundColor(Color::Green), Print("TARGET: "), SetForegroundColor(Color::White), Print(display_path))?;
     
     if app.is_pass { 
         execute!(out, cursor::MoveTo(2,4), SetForegroundColor(Color::Yellow), Print("KEY: "), SetForegroundColor(Color::White), Print("*".repeat(app.pass.len())))?; 
     }
     
-    if let Some(err) = &app.last_error { 
-        let err_str = format!("ERROR: {}", err);
-        let display_err = if err_str.len() > max_text_width { &err_str[..max_text_width] } else { &err_str };
-        execute!(out, cursor::MoveTo(2,6), SetForegroundColor(Color::Red), Print(display_err))?; 
-    }
-
-    let log_y = 8;
+    let log_y = 6;
     for (i, log) in app.logs.iter().rev().take((h - log_y - 2) as usize).enumerate() {
         let display_log = if log.len() > max_text_width {
             format!("{}...", &log[..max_text_width - 3])
@@ -243,7 +268,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
     execute!(out, cursor::Hide)?;
     loop {
-        let (w, h) = size()?;
+        let (w, h) = size().unwrap_or((80, 24));
         render(&mut out, &app, w, h)?;
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
