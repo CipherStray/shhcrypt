@@ -1,9 +1,9 @@
 [package]
 name = "shhcrypt"
-version = "1.0.0"
+version = "1.1.0" 
 edition = "2021"
 authors = ["CipherStray"]
-description = "Fast and secure terminal-based file encryption tool"
+description = "Vibecoded experimental encryption tool - Under security refactoring"
 
 [dependencies]
 crossterm = "0.27"
@@ -16,8 +16,8 @@ zeroize = { version = "1.7", features = ["derive"] }
 chrono = "0.4"
 
 [profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
+opt-level = "z"  
+lto = true        
+codegen-units = 1 
+panic = "abort"   
+strip = true   
